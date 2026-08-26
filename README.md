@@ -57,17 +57,28 @@ maintaining ~200 lines of Python instead of a managed integration.
 ## Usage
 
 ```hcl
+# Secret created and populated out-of-band (e.g. `aws secretsmanager
+# create-secret`) - its value never flows through Terraform/CI. This
+# resource only adopts it (via an `import` block) for tag/description
+# upkeep and to give the module something to grant IAM read access to.
+resource "aws_secretsmanager_secret" "teams_webhook" {
+  name = "my-account/my-service/teams-webhook-url"
+}
+
 module "teams_notifier" {
-  source = "git::https://github.com/MemberSolutionsInc/msi-terraform-sns-teams-notifier.git?ref=v0.1.0"
+  source = "git::https://github.com/MemberSolutionsInc/msi-terraform-sns-teams-notifier.git?ref=v0.3.0"
 
   severities            = ["critical", "warning"]
   lambda_function_name  = "sns-teams-notifier"
 
-  # Sensitive - supply via TF_VAR_team_webhook_map / TF_VAR_default_webhook_url
-  # or a secrets-backed source (e.g. a secrets manager data source). Never
-  # commit real values for these.
-  team_webhook_map     = var.team_webhook_map
-  default_webhook_url  = var.default_webhook_url
+  # Preferred: the Lambda fetches this live at invoke time (cached 5min),
+  # so rotating the secret's value needs no Terraform apply or redeploy.
+  default_webhook_secret_arn = aws_secretsmanager_secret.teams_webhook.arn
+
+  # team_webhook_map still requires literal values today - sensitive,
+  # supply via TF_VAR_team_webhook_map or a secrets-backed source. Never
+  # commit real values.
+  team_webhook_map = var.team_webhook_map
 
   tier2_dashboard_url_template = "https://dashboards.internal.membersolutions.com/tier2/{service}?env={env}"
   tier3_dashboard_url_template = "https://dashboards.internal.membersolutions.com/tier3/{service}?env={env}"
@@ -97,16 +108,23 @@ module "cloudwatch_alarms" {
 
 ### Supplying sensitive inputs
 
-`team_webhook_map` and `default_webhook_url` contain Microsoft Teams
-Incoming Webhook URLs, which are effectively secrets (anyone with the URL
-can post to the channel). Matching this org's existing convention for
-sensitive variables:
+`team_webhook_map`, `default_webhook_url`, and `default_webhook_secret_arn`'s
+target all contain Microsoft Teams Incoming Webhook URLs, which are
+effectively secrets (anyone with the URL can post to the channel).
 
 - **Never** hardcode real values in `.tf`/`.tfvars` files or commit them.
-- Supply them via `TF_VAR_team_webhook_map` / `TF_VAR_default_webhook_url`
-  environment variables in CI, or
-- Source them from a secrets-backed data source (e.g. AWS Secrets Manager /
-  SSM Parameter Store SecureString) and pass the result into the module.
+- Preferred: create the secret out-of-band (`aws secretsmanager
+  create-secret`) with the real value, adopt the container into Terraform
+  via an `import` block for tag upkeep only, and pass its ARN as
+  `default_webhook_secret_arn`. The value never flows through Terraform
+  state, CI logs, or a GitHub Actions secret, and the Lambda picks up
+  rotations without a redeploy.
+- Deprecated: `default_webhook_url`, baked into the Lambda's environment at
+  apply time. Supply via `TF_VAR_default_webhook_url` or a secrets-backed
+  data source if used - rotation requires a new apply.
+- `team_webhook_map` still only supports literal values (no secret-ARN
+  equivalent yet) - supply via `TF_VAR_team_webhook_map` or a secrets-backed
+  source.
 
 ## Inputs
 
@@ -114,7 +132,8 @@ sensitive variables:
 |------|-------------|------|---------|----------|-----------|
 | `severities` | List of alarm severities to provision an SNS topic for | `list(string)` | `["critical", "warning"]` | no | no |
 | `team_webhook_map` | Map of owning team name -> Teams Incoming Webhook URL | `map(string)` | n/a | yes | yes |
-| `default_webhook_url` | Fallback Teams Incoming Webhook URL when a team isn't in `team_webhook_map` | `string` | n/a | yes | yes |
+| `default_webhook_secret_arn` | ARN of a Secrets Manager secret holding the fallback webhook URL, fetched live at invoke time (cached 5min). Preferred; takes precedence over `default_webhook_url` | `string` | `""` | no | no |
+| `default_webhook_url` | Deprecated: fallback Teams Incoming Webhook URL baked into the Lambda's environment at apply time | `string` | `""` | no | yes |
 | `tier2_dashboard_url_template` | URL template for the Tier 2 dashboard (`{service}`/`{env}` placeholders) | `string` | `"https://dashboards.internal.membersolutions.com/tier2/{service}?env={env}"` | no | no |
 | `tier3_dashboard_url_template` | URL template for the Tier 3 dashboard (`{service}`/`{env}` placeholders) | `string` | `"https://dashboards.internal.membersolutions.com/tier3/{service}?env={env}"` | no | no |
 | `lambda_function_name` | Name of the Lambda notifier function | `string` | `"sns-teams-notifier"` | no | no |
