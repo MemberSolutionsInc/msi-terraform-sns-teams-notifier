@@ -16,9 +16,36 @@ variable "team_webhook_map" {
 }
 
 variable "default_webhook_url" {
-  description = "Fallback Microsoft Teams Incoming Webhook URL used when an alarm's `team` tag is missing or not present in team_webhook_map. Treat as a secret - supply via TF_VAR_default_webhook_url or a secrets-backed source."
+  description = <<-EOT
+    Fallback Microsoft Teams Incoming Webhook URL used when an alarm's `team`
+    tag is missing or not present in team_webhook_map. Baked directly into the
+    Lambda's environment at apply time - rotating it requires a new apply.
+
+    Deprecated in favor of `default_webhook_secret_arn`, which the Lambda
+    reads live at invoke time instead. Kept for backward compatibility; leave
+    unset (default) when using `default_webhook_secret_arn`. Treat as a
+    secret - supply via TF_VAR_default_webhook_url or a secrets-backed source,
+    never a literal value.
+  EOT
   type        = string
   sensitive   = true
+  default     = ""
+}
+
+variable "default_webhook_secret_arn" {
+  description = <<-EOT
+    ARN of an AWS Secrets Manager secret whose value is the fallback
+    Microsoft Teams Incoming Webhook URL. The Lambda fetches this live at
+    invoke time (cached in-memory for 5 minutes) rather than having the URL
+    baked into its environment, so rotating the secret's value takes effect
+    without a Terraform apply or redeploy.
+
+    Preferred over `default_webhook_url`. Takes precedence when both are set.
+    The caller is responsible for the secret's lifecycle (creation, value,
+    rotation) - this module only grants the Lambda's role read access to it.
+  EOT
+  type        = string
+  default     = ""
 }
 
 variable "tier2_dashboard_url_template" {

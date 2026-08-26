@@ -14,15 +14,24 @@ dependency is required.
 """
 import json
 import os
+import time
 import urllib.request
 import urllib.error
 
 import boto3
 
 cloudwatch = boto3.client("cloudwatch")
+secretsmanager = boto3.client("secretsmanager")
 
 TEAMS_CARD_SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json"
 TEAMS_CARD_VERSION = "1.4"
+
+# In-memory cache for secrets fetched via DEFAULT_WEBHOOK_SECRET_ARN, so a
+# burst of alarms firing together doesn't hit Secrets Manager once per
+# invocation. Lives for the container's lifetime; a cold start always
+# refetches.
+_SECRET_CACHE_TTL_SECONDS = 300
+_secret_cache = {}
 
 
 def _get_env_json(name, default=None):
@@ -58,12 +67,40 @@ def render_url(template, service, env):
     return template.format(service=service or "unknown", env=env or "unknown")
 
 
+def get_cached_secret(secret_arn):
+    """Fetch a Secrets Manager secret's string value, cached in-memory.
+
+    Returns None (rather than raising) on failure, so a Secrets Manager
+    problem degrades to a dropped notification instead of a crashed
+    invocation - consistent with get_alarm_tags' error handling above.
+    """
+    now = time.monotonic()
+    cached = _secret_cache.get(secret_arn)
+    if cached and (now - cached["fetched_at"]) < _SECRET_CACHE_TTL_SECONDS:
+        return cached["value"]
+
+    try:
+        response = secretsmanager.get_secret_value(SecretId=secret_arn)
+        value = response["SecretString"]
+    except Exception as exc:  # noqa: BLE001 - resolve_webhook_url logs the eventual None
+        print(f"WARNING: failed to fetch secret {secret_arn}: {exc}")
+        value = None
+
+    _secret_cache[secret_arn] = {"value": value, "fetched_at": now}
+    return value
+
+
 def resolve_webhook_url(team):
     team_webhook_map = _get_env_json("TEAM_WEBHOOK_MAP", {})
-    default_webhook_url = os.environ.get("DEFAULT_WEBHOOK_URL")
     if team and team in team_webhook_map:
         return team_webhook_map[team]
-    return default_webhook_url
+
+    default_webhook_secret_arn = os.environ.get("DEFAULT_WEBHOOK_SECRET_ARN")
+    if default_webhook_secret_arn:
+        return get_cached_secret(default_webhook_secret_arn)
+
+    # Deprecated path: URL baked directly into the environment.
+    return os.environ.get("DEFAULT_WEBHOOK_URL")
 
 
 def severity_color(severity):

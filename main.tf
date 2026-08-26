@@ -42,13 +42,27 @@ resource "aws_iam_role" "lambda" {
   tags = var.tags
 }
 
+locals {
+  # Only granted when default_webhook_secret_arn is actually supplied, so
+  # consumers still on the deprecated default_webhook_url path get no
+  # unused permission.
+  secret_read_statements = var.default_webhook_secret_arn != "" ? [
+    {
+      Sid      = "ReadDefaultWebhookSecret"
+      Effect   = "Allow"
+      Action   = ["secretsmanager:GetSecretValue"]
+      Resource = [var.default_webhook_secret_arn]
+    }
+  ] : []
+}
+
 resource "aws_iam_role_policy" "lambda" {
   name = "${var.lambda_function_name}-policy"
   role = aws_iam_role.lambda.id
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Sid    = "CloudWatchAlarmMetadata"
         Effect = "Allow"
@@ -68,7 +82,7 @@ resource "aws_iam_role_policy" "lambda" {
         ]
         Resource = "arn:aws:logs:*:*:*"
       }
-    ]
+    ], local.secret_read_statements)
   })
 }
 
@@ -87,6 +101,7 @@ resource "aws_lambda_function" "notifier" {
     variables = {
       TEAM_WEBHOOK_MAP             = jsonencode(var.team_webhook_map)
       DEFAULT_WEBHOOK_URL          = var.default_webhook_url
+      DEFAULT_WEBHOOK_SECRET_ARN   = var.default_webhook_secret_arn
       TIER2_DASHBOARD_URL_TEMPLATE = var.tier2_dashboard_url_template
       TIER3_DASHBOARD_URL_TEMPLATE = var.tier3_dashboard_url_template
     }
