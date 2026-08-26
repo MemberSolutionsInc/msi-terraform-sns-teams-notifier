@@ -71,14 +71,26 @@ module "teams_notifier" {
 
   tier2_dashboard_url_template = "https://dashboards.internal.membersolutions.com/tier2/{service}?env={env}"
   tier3_dashboard_url_template = "https://dashboards.internal.membersolutions.com/tier3/{service}?env={env}"
+
+  tags = local.tags
 }
 
-# Wire the sibling alarms modules at the SNS topics this module creates:
+# Wire the sibling alarms module at the SNS topics this module creates.
+# This module provisions one topic per severity (ALARM and OK notifications
+# share the same topic — the Lambda differentiates by the payload's
+# NewStateValue), but msi-terraform-cloudwatch-alarms' sns_topic_arns input
+# expects 4 distinct keys (separate alarm/ok arns per severity). Map the
+# same topic ARN into both keys per severity rather than provisioning
+# duplicate topics.
 module "cloudwatch_alarms" {
-  source = "git::https://github.com/MemberSolutionsInc/msi-terraform-cloudwatch-alarms.git?ref=v0.1.0"
+  source = "git::https://github.com/MemberSolutionsInc/msi-terraform-cloudwatch-alarms.git?ref=v0.2.0"
 
-  alarm_actions = [module.teams_notifier.sns_topic_arns["critical"]]
-  ok_actions    = [module.teams_notifier.sns_topic_arns["critical"]]
+  sns_topic_arns = {
+    critical_alarm_arn = module.teams_notifier.sns_topic_arns["critical"]
+    critical_ok_arn    = module.teams_notifier.sns_topic_arns["critical"]
+    warning_alarm_arn  = module.teams_notifier.sns_topic_arns["warning"]
+    warning_ok_arn     = module.teams_notifier.sns_topic_arns["warning"]
+  }
   # ...
 }
 ```
@@ -106,6 +118,7 @@ sensitive variables:
 | `tier2_dashboard_url_template` | URL template for the Tier 2 dashboard (`{service}`/`{env}` placeholders) | `string` | `"https://dashboards.internal.membersolutions.com/tier2/{service}?env={env}"` | no | no |
 | `tier3_dashboard_url_template` | URL template for the Tier 3 dashboard (`{service}`/`{env}` placeholders) | `string` | `"https://dashboards.internal.membersolutions.com/tier3/{service}?env={env}"` | no | no |
 | `lambda_function_name` | Name of the Lambda notifier function | `string` | `"sns-teams-notifier"` | no | no |
+| `tags` | Tags applied to the SNS topics, Lambda function, and its IAM role | `map(string)` | `{}` | no | no |
 
 ## Outputs
 

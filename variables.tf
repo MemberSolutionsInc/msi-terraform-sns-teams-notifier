@@ -38,3 +38,9 @@ variable "lambda_function_name" {
   type        = string
   default     = "sns-teams-notifier"
 }
+
+variable "tags" {
+  description = "Tags applied to the SNS topics, Lambda function, and its IAM role."
+  type        = map(string)
+  default     = {}
+}
