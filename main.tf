@@ -10,6 +10,7 @@ resource "aws_sns_topic" "alerts" {
   for_each = toset(var.severities)
 
   name = "alerts-${each.value}"
+  tags = var.tags
 }
 
 # ---------------------------------------------------------------------------
@@ -37,6 +38,8 @@ resource "aws_iam_role" "lambda" {
       }
     ]
   })
+
+  tags = var.tags
 }
 
 resource "aws_iam_role_policy" "lambda" {
@@ -88,6 +91,8 @@ resource "aws_lambda_function" "notifier" {
       TIER3_DASHBOARD_URL_TEMPLATE = var.tier3_dashboard_url_template
     }
   }
+
+  tags = var.tags
 }
 
 # ---------------------------------------------------------------------------
