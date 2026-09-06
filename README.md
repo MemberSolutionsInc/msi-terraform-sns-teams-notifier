@@ -30,8 +30,9 @@ CloudWatch Alarm -> SNS Topic (per severity) -> Lambda notifier -> Teams Incomin
    a runbook link, and links to the Tier 2/Tier 3 dashboards for that
    service/environment.
 5. The Lambda looks up which Teams Incoming Webhook to POST the card to
-   based on the alarm's `team` tag (via `team_webhook_map`), falling back
-   to `default_webhook_url` if the team isn't found in the map.
+   based on the alarm's `team` tag (via `team_webhook_secret_arn_map`, then
+   `team_webhook_map`), falling back to `default_webhook_secret_arn` /
+   `default_webhook_url` if the team isn't found in either map.
 
 Routing to the correct Teams channel is entirely driven by the `team` /
 `severity` tags set on each CloudWatch alarm by the alarms module - this
@@ -75,9 +76,17 @@ module "teams_notifier" {
   # so rotating the secret's value needs no Terraform apply or redeploy.
   default_webhook_secret_arn = aws_secretsmanager_secret.teams_webhook.arn
 
-  # team_webhook_map still requires literal values today - sensitive,
+  # Preferred over team_webhook_map for the same reason
+  # default_webhook_secret_arn is preferred over default_webhook_url: the
+  # Lambda fetches each team's webhook live at invoke time.
+  team_webhook_secret_arn_map = {
+    qa = aws_secretsmanager_secret.qa_team_webhook.arn
+  }
+
+  # team_webhook_map still requires literal values - sensitive,
   # supply via TF_VAR_team_webhook_map or a secrets-backed source. Never
-  # commit real values.
+  # commit real values. Checked only for teams not already present in
+  # team_webhook_secret_arn_map.
   team_webhook_map = var.team_webhook_map
 
   tier2_dashboard_url_template = "https://dashboards.internal.membersolutions.com/tier2/{service}?env={env}"
@@ -108,29 +117,30 @@ module "cloudwatch_alarms" {
 
 ### Supplying sensitive inputs
 
-`team_webhook_map`, `default_webhook_url`, and `default_webhook_secret_arn`'s
-target all contain Microsoft Teams Incoming Webhook URLs, which are
-effectively secrets (anyone with the URL can post to the channel).
+`team_webhook_secret_arn_map`, `team_webhook_map`, `default_webhook_url`, and
+`default_webhook_secret_arn`'s target all contain Microsoft Teams Incoming
+Webhook URLs, which are effectively secrets (anyone with the URL can post to
+the channel).
 
 - **Never** hardcode real values in `.tf`/`.tfvars` files or commit them.
 - Preferred: create the secret out-of-band (`aws secretsmanager
   create-secret`) with the real value, adopt the container into Terraform
   via an `import` block for tag upkeep only, and pass its ARN as
-  `default_webhook_secret_arn`. The value never flows through Terraform
-  state, CI logs, or a GitHub Actions secret, and the Lambda picks up
-  rotations without a redeploy.
-- Deprecated: `default_webhook_url`, baked into the Lambda's environment at
-  apply time. Supply via `TF_VAR_default_webhook_url` or a secrets-backed
-  data source if used - rotation requires a new apply.
-- `team_webhook_map` still only supports literal values (no secret-ARN
-  equivalent yet) - supply via `TF_VAR_team_webhook_map` or a secrets-backed
-  source.
+  `default_webhook_secret_arn` (fallback) or as an entry in
+  `team_webhook_secret_arn_map` (per-team). The value never flows through
+  Terraform state, CI logs, or a GitHub Actions secret, and the Lambda picks
+  up rotations without a redeploy.
+- Deprecated: `default_webhook_url` and `team_webhook_map`, both baked into
+  the Lambda's environment at apply time. Supply via `TF_VAR_default_webhook_url`
+  / `TF_VAR_team_webhook_map` or a secrets-backed data source if used -
+  rotation requires a new apply.
 
 ## Inputs
 
 | Name | Description | Type | Default | Required | Sensitive |
 |------|-------------|------|---------|----------|-----------|
 | `severities` | List of alarm severities to provision an SNS topic for | `list(string)` | `["critical", "warning"]` | no | no |
+| `team_webhook_secret_arn_map` | Map of owning team name -> ARN of a Secrets Manager secret holding that team's webhook URL, fetched live at invoke time (cached 5min). Preferred; checked before `team_webhook_map` | `map(string)` | `{}` | no | no |
 | `team_webhook_map` | Map of owning team name -> Teams Incoming Webhook URL | `map(string)` | n/a | yes | yes |
 | `default_webhook_secret_arn` | ARN of a Secrets Manager secret holding the fallback webhook URL, fetched live at invoke time (cached 5min). Preferred; takes precedence over `default_webhook_url` | `string` | `""` | no | no |
 | `default_webhook_url` | Deprecated: fallback Teams Incoming Webhook URL baked into the Lambda's environment at apply time | `string` | `""` | no | yes |

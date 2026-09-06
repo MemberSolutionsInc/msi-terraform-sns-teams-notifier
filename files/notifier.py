@@ -91,6 +91,10 @@ def get_cached_secret(secret_arn):
 
 
 def resolve_webhook_url(team):
+    team_webhook_secret_arn_map = _get_env_json("TEAM_WEBHOOK_SECRET_ARN_MAP", {})
+    if team and team in team_webhook_secret_arn_map:
+        return get_cached_secret(team_webhook_secret_arn_map[team])
+
     team_webhook_map = _get_env_json("TEAM_WEBHOOK_MAP", {})
     if team and team in team_webhook_map:
         return team_webhook_map[team]

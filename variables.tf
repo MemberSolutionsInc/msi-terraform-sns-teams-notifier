@@ -15,6 +15,24 @@ variable "team_webhook_map" {
   sensitive   = true
 }
 
+variable "team_webhook_secret_arn_map" {
+  description = <<-EOT
+    Map of owning team name -> ARN of a Secrets Manager secret whose value is
+    that team's Microsoft Teams Incoming Webhook URL. Checked before
+    `team_webhook_map`, so a team present in both wins here. The Lambda
+    fetches the value live at invoke time (cached in-memory for 5 minutes),
+    matching `default_webhook_secret_arn`'s behavior - so rotating any
+    team's webhook takes effect without a Terraform apply or redeploy.
+
+    Preferred over `team_webhook_map` for the same reason
+    `default_webhook_secret_arn` is preferred over `default_webhook_url`:
+    the caller is responsible for each secret's lifecycle (creation, value,
+    rotation) - this module only grants the Lambda's role read access to them.
+  EOT
+  type        = map(string)
+  default     = {}
+}
+
 variable "default_webhook_url" {
   description = <<-EOT
     Fallback Microsoft Teams Incoming Webhook URL used when an alarm's `team`
