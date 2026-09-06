@@ -46,14 +46,24 @@ locals {
   # Only granted when default_webhook_secret_arn is actually supplied, so
   # consumers still on the deprecated default_webhook_url path get no
   # unused permission.
-  secret_read_statements = var.default_webhook_secret_arn != "" ? [
-    {
-      Sid      = "ReadDefaultWebhookSecret"
-      Effect   = "Allow"
-      Action   = ["secretsmanager:GetSecretValue"]
-      Resource = [var.default_webhook_secret_arn]
-    }
-  ] : []
+  secret_read_statements = concat(
+    var.default_webhook_secret_arn != "" ? [
+      {
+        Sid      = "ReadDefaultWebhookSecret"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [var.default_webhook_secret_arn]
+      }
+    ] : [],
+    length(var.team_webhook_secret_arn_map) > 0 ? [
+      {
+        Sid      = "ReadTeamWebhookSecrets"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = values(var.team_webhook_secret_arn_map)
+      }
+    ] : []
+  )
 }
 
 resource "aws_iam_role_policy" "lambda" {
@@ -99,6 +109,7 @@ resource "aws_lambda_function" "notifier" {
 
   environment {
     variables = {
+      TEAM_WEBHOOK_SECRET_ARN_MAP  = jsonencode(var.team_webhook_secret_arn_map)
       TEAM_WEBHOOK_MAP             = jsonencode(var.team_webhook_map)
       DEFAULT_WEBHOOK_URL          = var.default_webhook_url
       DEFAULT_WEBHOOK_SECRET_ARN   = var.default_webhook_secret_arn
