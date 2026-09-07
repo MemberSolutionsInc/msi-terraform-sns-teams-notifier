@@ -115,6 +115,27 @@ def severity_color(severity):
     return mapping.get((severity or "").lower(), "Default")
 
 
+def compute_priority(team, severity):
+    """Derive an incident-priority label (P1/P2/P3) from an alarm's team and
+    severity tags, so triage priority is consistent across every account
+    without needing a separate tag maintained per-alarm.
+
+    team="qa" (the shared QA/dev/staging routing tag - see
+    resolve_webhook_url) always resolves to P3 regardless of severity: a
+    qa/dev/staging-tier resource never pages as urgently as production,
+    even a "critical"-tier one. Everything else is production-tier, split
+    P1 (critical) / P2 (warning or info).
+    """
+    if (team or "").lower() == "qa":
+        return "P3"
+    sev = (severity or "").lower()
+    if sev == "critical":
+        return "P1"
+    if sev in ("warning", "info"):
+        return "P2"
+    return "Unknown"
+
+
 def build_adaptive_card(alarm, tags):
     alarm_name = alarm.get("AlarmName", "Unknown alarm")
     alarm_description = alarm.get("AlarmDescription") or "(no description)"
@@ -126,11 +147,13 @@ def build_adaptive_card(alarm, tags):
     severity = tags.get("severity")
     team = tags.get("team")
     runbook = tags.get("runbook")
+    priority = compute_priority(team, severity)
 
     tier2_url = render_url(os.environ.get("TIER2_DASHBOARD_URL_TEMPLATE"), service, env)
     tier3_url = render_url(os.environ.get("TIER3_DASHBOARD_URL_TEMPLATE"), service, env)
 
     facts = [
+        {"title": "Priority", "value": priority},
         {"title": "Service", "value": service or "unknown"},
         {"title": "Environment", "value": env or "unknown"},
         {"title": "Severity", "value": severity or "unknown"},
