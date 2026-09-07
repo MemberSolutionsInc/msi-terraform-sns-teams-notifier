@@ -115,6 +115,53 @@ def severity_color(severity):
     return mapping.get((severity or "").lower(), "Default")
 
 
+def resolve_severity(tags, topic_arn):
+    """Prefer an explicit "severity" tag; fall back to the SNS topic
+    name's suffix. Every severity topic in this org is named
+    <prefix>-critical/-warning/-info by convention (see
+    msi-terraform-cloudwatch-alarms and modules/97d/monitoring), so this
+    works even for alarms owned by an app that sets no severity tag at
+    all - e.g. externally-managed CloudFormation/SAM stacks like
+    callhero, or in-repo app modules like 97d that use their own
+    tagging convention.
+    """
+    if tags.get("severity"):
+        return tags["severity"]
+    topic_name = (topic_arn or "").rsplit(":", 1)[-1]
+    for sev in ("critical", "warning", "info"):
+        if topic_name.endswith(f"-{sev}"):
+            return sev
+    return None
+
+
+def resolve_env(tags):
+    """Some apps tag Title-case ("Environment") instead of this
+    ecosystem's lowercase convention ("env") - e.g. modules/97d's
+    standard-tags block (Environment/Service/Repo). AWS tags are
+    case-sensitive, so these are otherwise treated as entirely
+    different tags and the card shows "unknown" despite real tag data
+    existing on the alarm.
+    """
+    return tags.get("env") or tags.get("Environment")
+
+
+def resolve_service(tags):
+    return tags.get("service") or tags.get("Service")
+
+
+def resolve_team(tags, env):
+    """Prefer an explicit "team" tag; otherwise infer from env for apps
+    that tag Environment but have no team-routing concept of their own
+    (e.g. modules/97d) - same non-prod heuristic used throughout the
+    MSI alerting expansion (see compute_priority below).
+    """
+    if tags.get("team"):
+        return tags["team"]
+    if env and env.lower() not in ("prod", "production"):
+        return "qa"
+    return None
+
+
 def compute_priority(team, severity):
     """Derive an incident-priority label (P1/P2/P3) from an alarm's team and
     severity tags, so triage priority is consistent across every account
@@ -136,16 +183,16 @@ def compute_priority(team, severity):
     return "Unknown"
 
 
-def build_adaptive_card(alarm, tags):
+def build_adaptive_card(alarm, tags, topic_arn=None):
     alarm_name = alarm.get("AlarmName", "Unknown alarm")
     alarm_description = alarm.get("AlarmDescription") or "(no description)"
     new_state = alarm.get("NewStateValue", "UNKNOWN")
     new_state_reason = alarm.get("NewStateReason", "")
 
-    service = tags.get("service")
-    env = tags.get("env")
-    severity = tags.get("severity")
-    team = tags.get("team")
+    service = resolve_service(tags)
+    env = resolve_env(tags)
+    severity = resolve_severity(tags, topic_arn)
+    team = resolve_team(tags, env)
     runbook = tags.get("runbook")
     priority = compute_priority(team, severity)
 
@@ -263,6 +310,7 @@ def handler(event, context):
     for record in event.get("Records", []):
         sns = record.get("Sns", {})
         message_raw = sns.get("Message", "{}")
+        topic_arn = sns.get("TopicArn")
         try:
             alarm = json.loads(message_raw)
         except ValueError:
@@ -272,8 +320,8 @@ def handler(event, context):
         alarm_arn = alarm.get("AlarmArn")
         tags = get_alarm_tags(alarm_arn)
 
-        card = build_adaptive_card(alarm, tags)
-        webhook_url = resolve_webhook_url(tags.get("team"))
+        card = build_adaptive_card(alarm, tags, topic_arn)
+        webhook_url = resolve_webhook_url(resolve_team(tags, resolve_env(tags)))
         sent = post_to_teams(webhook_url, card)
         results.append({"alarm": alarm.get("AlarmName"), "sent": sent})
 
