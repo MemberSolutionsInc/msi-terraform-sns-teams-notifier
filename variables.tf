@@ -4,6 +4,28 @@ variable "severities" {
   default     = ["critical", "warning"]
 }
 
+variable "notify_severities" {
+  description = <<-EOT
+    Subset of `severities` whose SNS topics the Teams notifier Lambda
+    subscribes to. Defaults to null, meaning "every severity in
+    `severities`" - the pre-v0.7.0 behavior, so existing callers need no
+    change.
+
+    Set this to route some severities away from Teams while keeping their
+    topics intact: topic creation is still driven solely by `severities`,
+    so `sns_topic_arns` keeps every key and every consumer's
+    alarm_actions/ok_actions reference keeps resolving. Another subscriber
+    (e.g. an ADO ticket-automation Lambda in a sibling project) then owns
+    the excluded topics.
+
+    Must be a subset of `severities` - a topic can only be subscribed to
+    if it was created. Supplying a severity not in `severities` fails at
+    plan time with an index error on aws_sns_topic.alerts.
+  EOT
+  type        = list(string)
+  default     = null
+}
+
 variable "team_webhook_map" {
   description = <<-EOT
     Map of owning team name -> Microsoft Teams Incoming Webhook URL. The Lambda notifier

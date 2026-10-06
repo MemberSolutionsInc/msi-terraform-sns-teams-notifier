@@ -39,6 +39,17 @@ Routing to the correct Teams channel is entirely driven by the `team` /
 module does not need to know about individual alarms or services ahead of
 time.
 
+### Routing some severities away from Teams (v0.7.0+)
+
+Topic creation (`severities`) and the Teams Lambda's own subscriptions are
+independently controlled as of v0.7.0, via `notify_severities`. This lets a
+caller keep a severity's topic alive - so every CloudWatch alarm's
+`alarm_actions`/`ok_actions` reference to `sns_topic_arns[<severity>]` keeps
+resolving - while routing that severity to a different subscriber instead of
+Teams (e.g. a ticket-automation Lambda deployed alongside this module).
+`notify_severities` defaults to `null`, meaning "every severity in
+`severities`" - the pre-v0.7.0 behavior, so existing callers need no change.
+
 ## Why a Lambda notifier instead of AWS Chatbot
 
 Per this org's monitoring standard, every alert delivered to Teams must
@@ -140,6 +151,7 @@ the channel).
 | Name | Description | Type | Default | Required | Sensitive |
 |------|-------------|------|---------|----------|-----------|
 | `severities` | List of alarm severities to provision an SNS topic for | `list(string)` | `["critical", "warning"]` | no | no |
+| `notify_severities` | Subset of `severities` whose topics the Teams Lambda subscribes to; `null` = all of them (pre-v0.7.0 behavior). See "Routing some severities away from Teams" above | `list(string)` | `null` | no | no |
 | `team_webhook_secret_arn_map` | Map of owning team name -> ARN of a Secrets Manager secret holding that team's webhook URL, fetched live at invoke time (cached 5min). Preferred; checked before `team_webhook_map` | `map(string)` | `{}` | no | no |
 | `team_webhook_map` | Map of owning team name -> Teams Incoming Webhook URL | `map(string)` | n/a | yes | yes |
 | `default_webhook_secret_arn` | ARN of a Secrets Manager secret holding the fallback webhook URL, fetched live at invoke time (cached 5min). Preferred; takes precedence over `default_webhook_url` | `string` | `""` | no | no |

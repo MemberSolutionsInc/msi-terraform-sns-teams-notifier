@@ -1,5 +1,15 @@
 locals {
   lambda_source_dir = "${path.module}/files"
+
+  # Which severities' topics the Teams Lambda actually subscribes to -
+  # independent of which topics get created (that's still all of
+  # var.severities, via aws_sns_topic.alerts below). See notify_severities'
+  # description in variables.tf.
+  notify_severities = var.notify_severities == null ? var.severities : var.notify_severities
+
+  notify_topics = {
+    for sev in local.notify_severities : sev => aws_sns_topic.alerts[sev]
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -126,7 +136,7 @@ resource "aws_lambda_function" "notifier" {
 # ---------------------------------------------------------------------------
 
 resource "aws_sns_topic_subscription" "notifier" {
-  for_each = aws_sns_topic.alerts
+  for_each = local.notify_topics
 
   topic_arn = each.value.arn
   protocol  = "lambda"
@@ -134,7 +144,7 @@ resource "aws_sns_topic_subscription" "notifier" {
 }
 
 resource "aws_lambda_permission" "sns_invoke" {
-  for_each = aws_sns_topic.alerts
+  for_each = local.notify_topics
 
   statement_id  = "AllowSNS-${each.key}"
   action        = "lambda:InvokeFunction"
